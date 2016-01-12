@@ -10,10 +10,9 @@ Base = declarative_base()
 
 class Restaurant(Base):
 
-    __tablename__ = 'shelter'
+    __tablename__ = 'restaurant'
 
     name = Column(String(80), nullable=False)
-
     id = Column(Integer, primary_key=True)
 
 class MenuItem(Base):
