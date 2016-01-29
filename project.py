@@ -13,6 +13,40 @@ session = DBSession()
 
 app = Flask(__name__)
 
+@app.route('/')
+@app.route('/restaurants/')
+def restaurants():
+    rests = session.query(Restaurant).all()
+    return [restaurant.name for restaurant in rests]
+
+
+@app.route('/restaurant/new', methods=['GET', 'POST'])
+def newRestaurant():
+    if request.method == 'POST':
+        new_restaurant = Restaurant(name=request.form['name'])
+        session.add(new_restaurant)
+        session.commit()
+        flash("New restaurnat " + new_restaurant.name + " added!")
+        return redirect(url_for('restaurants'))
+    else:
+        return "Page to create new restaurant"
+
+
+@app.route('/restaurants/<int:restaurant_id>/edit', methods=['GET', 'POST'])
+def editRestaurant(restaurant_id):
+    if request.method == 'POST':
+        return "Restaurant needs to be edited and a flash message displayed, redirect to restaurants page"
+    else:
+        return "Page to edit restaurant"
+
+
+@app.route('/restaurants/<int:restaurant_id>/delete', methods=['GET', 'POST'])
+def deleteRestaurant(restaurant_id):
+    if request.method == 'POST':
+        return "Restaurant needs to be deleted and a flash message displayed, redirect to restaurants page"
+    else:
+        return "Page to confirm deletion of restaurant"
+
 
 @app.route('/restaurants/<int:restaurant_id>/menu/JSON')
 def restaurantMenuJSON(restaurant_id):
