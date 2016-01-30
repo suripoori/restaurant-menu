@@ -15,9 +15,9 @@ app = Flask(__name__)
 
 @app.route('/')
 @app.route('/restaurants/')
-def restaurants():
-    rests = session.query(Restaurant).all()
-    return [restaurant.name for restaurant in rests]
+def showRestaurants():
+    restaurants = session.query(Restaurant).all()
+    return render_template('restaurant.html', restaurants=restaurants)
 
 
 @app.route('/restaurant/new', methods=['GET', 'POST'])
@@ -26,26 +26,35 @@ def newRestaurant():
         new_restaurant = Restaurant(name=request.form['name'])
         session.add(new_restaurant)
         session.commit()
-        flash("New restaurnat " + new_restaurant.name + " added!")
-        return redirect(url_for('restaurants'))
+        flash("New restaurant " + new_restaurant.name + " added!")
+        return redirect(url_for('showRestaurants'))
     else:
-        return "Page to create new restaurant"
+        return render_template('newRestaurant.html')
 
 
 @app.route('/restaurants/<int:restaurant_id>/edit', methods=['GET', 'POST'])
 def editRestaurant(restaurant_id):
+    editedRestaurant = session.query(Restaurant).filter_by(id=restaurant_id).one()
     if request.method == 'POST':
-        return "Restaurant needs to be edited and a flash message displayed, redirect to restaurants page"
+        # return "Restaurant needs to be edited and a flash message displayed, redirect to restaurants page"
+        if request.form['name']:
+            editedRestaurant.name = request.form['name']
+        session.commit()
+        flash("Restaurant " + editedRestaurant.name + " edited!")
+        return redirect(url_for('showRestaurants'))
     else:
-        return "Page to edit restaurant"
+        return render_template('editRestaurant.html', restaurant_id=restaurant_id, restaurant=editedRestaurant)
 
 
 @app.route('/restaurants/<int:restaurant_id>/delete', methods=['GET', 'POST'])
 def deleteRestaurant(restaurant_id):
+    deletedRestaurant = session.query(Restaurant).filter_by(id=restaurant_id).one()
     if request.method == 'POST':
-        return "Restaurant needs to be deleted and a flash message displayed, redirect to restaurants page"
+        session.delete(deletedRestaurant)
+        flash("Restaurant " + deletedRestaurant.name + " deleted!")
+        return redirect(url_for('showRestaurants'))
     else:
-        return "Page to confirm deletion of restaurant"
+        return render_template('deleteRestaurant.html', restaurant_id=restaurant_id, restaurant=deletedRestaurant)
 
 
 @app.route('/restaurants/<int:restaurant_id>/menu/JSON')
