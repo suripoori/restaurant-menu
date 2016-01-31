@@ -1,17 +1,123 @@
 __author__ = 'Suraj'
 
 from flask import Flask, render_template, url_for, request, redirect, flash, jsonify
+from flask import session as login_session
+import random, string
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from database_setup import Base, Restaurant, MenuItem
 
+from oauth2client.client import flow_from_clientsecrets
+from oauth2client.client import FlowExchangeError
+import httplib2
+import json
+from flask import make_response
+import requests
+
+# Connect to database and create a database session object
 engine = create_engine('sqlite:///restaurantmenu.db')
 Base.metadata.bind = engine
 DBSession = sessionmaker(bind=engine)
 session = DBSession()
 
 app = Flask(__name__)
+
+CLIENT_ID = json.loads(
+    open('client_secrets.json', 'r').read())['web']['client_id']
+APPLICATION_NAME = "Restaurant Menu Application"
+
+
+# Create anti forgery state token
+@app.route('/login')
+def showLogin():
+    state = ''.join(random.choice(string.ascii_uppercase + string.digits) for x in range(32))
+    login_session['state'] = state
+    # return "The current session state is {}".format(login_session['state'])
+    return render_template('login.html', client_id=CLIENT_ID, STATE=state)
+
+
+# The ajax portion in the login will call this function
+@app.route('/gconnect', methods=['POST'])
+def gconnect():
+    # Validate state token
+    # First check if the state of the server when the user clicked login is same as the state
+    # when the user POSTs. Otherwise, it may be a malicious attack on the server
+    if request.args.get('state') != login_session['state']:
+        response = make_response(json.dumps("Invalid state token"), 401)
+        response.headers['Content-Type'] = 'application/json'
+        return response
+    print("Verified state token!")
+    code = request.data
+
+    try:
+        # convert the authorization code into a credential object by talking to the token_uri from client_secrets
+        # this object will contain the access token and the refresh token
+        oauth_flow = flow_from_clientsecrets('client_secrets.json', scope='')
+        oauth_flow.redirect_uri = 'postmessage'
+        credentials = oauth_flow.step2_exchange(code)
+        print("Converted auth code to credential object!")
+    except FlowExchangeError:
+        response = make_response(json.dumps('Failed to upgrade the authorization code.'), 401)
+        response.headers['Content-Type'] = 'application/json'
+        return response
+
+    # Validate access token in the credentials object
+    access_token = credentials.access_token
+    url = ('https://www.googleapis.com/oauth2/v1/tokeninfo?access_token={}'.format(access_token))
+    h = httplib2.Http()
+    result = json.loads(h.request(url, 'GET')[1])
+    print("Used access token to talk to googleapis")
+    if result.get('error') is not None:
+        response = make_response(json.dumps(result.get('error')), 500)
+        response.headers['Content-Type'] = 'application/json'
+        return response
+    # Verify the access token is used for the right user
+    gplus_id = credentials.id_token['sub']
+    if result['user_id'] != gplus_id:
+        response = make_response(json.dumps("Token's user id does not match given user id"), 401)
+        response.headers['Content-Type'] = 'application/json'
+        return  response
+    # Verify the access token is valid for the web server
+    if result['issued_to'] != CLIENT_ID:
+        response = make_response(json.dumps("Token's client ID does not match the app"), 401)
+        response.headers['Content-Type'] = 'application/json'
+        return  response
+    # Check to see if user is already logged in
+    stored_credentials = login_session.get('credentials')
+    stored_gplus_id = login_session.get('gplus_id')
+    if stored_credentials is not None and stored_gplus_id == gplus_id:
+        response = make_response(json.dumps("Current user already connected"), 200)
+        response.headers['Content-Type'] = 'application/json'
+        return  response
+
+    # Store the access token in the session for later use.
+    login_session['credentials'] = credentials
+    login_session['gplus_id'] = gplus_id
+
+    # Get user info
+    userinfo_url = "https://www.googleapis.com/oauth2/v1/userinfo"
+    params = {'access_token': credentials.access_token, 'alt': 'json'}
+    answer = requests.get(userinfo_url, params=params)
+
+    data = answer.json()
+
+    login_session['username'] = data['name']
+    login_session['picture'] = data['picture']
+    login_session['email'] = data['email']
+
+    output = ''
+    output += '<h1>Welcome, '
+    output += login_session['username']
+    output += '!</h1>'
+    output += '<img src="'
+    output += login_session['picture']
+    output += ' " style = "width: 300px; height: 300px;border-radius: 150px;-webkit-border-radius: 150px;-moz-border-radius: 150px;"> '
+    flash("you are now logged in as {}".format(login_session['username']))
+    print("done!")
+    return output
+
+
 
 @app.route('/restaurants/<int:restaurant_id>/menu/JSON')
 def restaurantMenuJSON(restaurant_id):
