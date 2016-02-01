@@ -15,6 +15,8 @@ import json
 from flask import make_response
 import requests
 
+from functools import wraps
+
 # Connect to database and create a database session object
 engine = create_engine('sqlite:///restaurantmenu.db')
 Base.metadata.bind = engine
@@ -35,6 +37,16 @@ def showLogin():
     login_session['state'] = state
     # return "The current session state is {}".format(login_session['state'])
     return render_template('login.html', client_id=CLIENT_ID, STATE=state)
+
+
+def ensureLogin(func):
+    @wraps(func)
+    def decorated_function(*args, **kwargs):
+        if 'username' not in login_session:
+            flash("You need to login to complete this action")
+            return redirect(url_for('showLogin'))
+        return func(*args, **kwargs)
+    return decorated_function
 
 
 # The ajax portion in the login will call this function
@@ -102,6 +114,7 @@ def gconnect():
 
     data = answer.json()
 
+    login_session['access_token'] = access_token
     login_session['username'] = data['name']
     login_session['picture'] = data['picture']
     login_session['email'] = data['email']
@@ -117,6 +130,36 @@ def gconnect():
     print("done!")
     return output
 
+
+@app.route('/gdisconnect')
+def gdisconnect():
+    access_token = login_session.get('access_token')
+    print('In gdisconnect access token is {}'.format(access_token))
+    print('User name is: ')
+    print(login_session['username'])
+    if access_token is None:
+        print('Access Token is None')
+        response = make_response(json.dumps('Current user not connected.'), 401)
+        response.headers['Content-Type'] = 'application/json'
+        return response
+    url = 'https://accounts.google.com/o/oauth2/revoke?token={}'.format(login_session['access_token'])
+    h = httplib2.Http()
+    result = h.request(url, 'GET')[0]
+    print('result is ')
+    print(result)
+    if result['status'] == '200':
+        del(login_session['access_token'])
+        del(login_session['gplus_id'])
+        del(login_session['username'])
+        del(login_session['email'])
+        del(login_session['picture'])
+        response = make_response(json.dumps('Successfully disconnected.'), 200)
+        response.headers['Content-Type'] = 'application/json'
+        return response
+    else:
+        response = make_response(json.dumps('Failed to revoke token for given user.', 400))
+        response.headers['Content-Type'] = 'application/json'
+        return response
 
 
 @app.route('/restaurants/<int:restaurant_id>/menu/JSON')
@@ -145,6 +188,7 @@ def showRestaurants():
 
 
 @app.route('/restaurant/new', methods=['GET', 'POST'])
+@ensureLogin
 def newRestaurant():
     if request.method == 'POST':
         new_restaurant = Restaurant(name=request.form['name'])
@@ -157,6 +201,7 @@ def newRestaurant():
 
 
 @app.route('/restaurants/<int:restaurant_id>/edit', methods=['GET', 'POST'])
+@ensureLogin
 def editRestaurant(restaurant_id):
     editedRestaurant = session.query(Restaurant).filter_by(id=restaurant_id).one()
     if request.method == 'POST':
@@ -171,6 +216,7 @@ def editRestaurant(restaurant_id):
 
 
 @app.route('/restaurants/<int:restaurant_id>/delete', methods=['GET', 'POST'])
+@ensureLogin
 def deleteRestaurant(restaurant_id):
     deletedRestaurant = session.query(Restaurant).filter_by(id=restaurant_id).one()
     if request.method == 'POST':
@@ -190,6 +236,7 @@ def restaurantMenu(restaurant_id):
 
 
 @app.route('/restaurants/<int:restaurant_id>/menuitems/new', methods=['GET', 'POST'])
+@ensureLogin
 def newMenuItem(restaurant_id):
     if request.method == 'POST':
         newItem = MenuItem(name=request.form['name'], description=request.form['description'],
@@ -203,6 +250,7 @@ def newMenuItem(restaurant_id):
 
 
 @app.route('/restaurants/<int:restaurant_id>/menuitems/<int:menu_id>/edit', methods=['GET', 'POST'])
+@ensureLogin
 def editMenuItem(restaurant_id, menu_id):
     editedItem = session.query(MenuItem).filter_by(id=menu_id).one()
     if request.method == 'POST':
@@ -224,6 +272,7 @@ def editMenuItem(restaurant_id, menu_id):
 
 
 @app.route('/restaurants/<int:restaurant_id>/menuitems/<int:menu_id>/delete', methods=['GET', 'POST'])
+@ensureLogin
 def deleteMenuItem(restaurant_id, menu_id):
     deleteItem = session.query(MenuItem).filter_by(id=menu_id).one()
     if request.method == 'POST':
