@@ -6,7 +6,7 @@ import random, string
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from database_setup import Base, Restaurant, MenuItem
+from database_setup import Base, Restaurant, MenuItem, User
 
 from oauth2client.client import flow_from_clientsecrets
 from oauth2client.client import FlowExchangeError
@@ -18,7 +18,7 @@ import requests
 from functools import wraps
 
 # Connect to database and create a database session object
-engine = create_engine('sqlite:///restaurantmenu.db')
+engine = create_engine('sqlite:///restaurantmenuwithusers.db')
 Base.metadata.bind = engine
 DBSession = sessionmaker(bind=engine)
 session = DBSession()
@@ -29,10 +29,33 @@ CLIENT_ID = json.loads(
     open('client_secrets.json', 'r').read())['web']['client_id']
 APPLICATION_NAME = "Restaurant Menu Application"
 
+def createUser(login_session):
+    newUser = User(name=login_session['username'], email=login_session[
+                   'email'], picture=login_session['picture'])
+    session.add(newUser)
+    session.commit()
+    user = session.query(User).filter_by(email=login_session['email']).one()
+    login_session['user_id'] = user.id
+    return user.id
 
-# Create anti forgery state token
+
+def getUserInfo(user_id):
+    user = session.query(User).filter_by(id=user_id).one()
+    return user
+
+
+def getUserID(email):
+    try:
+        user = session.query(User).filter_by(email=email).one()
+        return user.id
+    except:
+        return None
+
+
+
 @app.route('/login')
 def showLogin():
+    # Create anti forgery state token
     state = ''.join(random.choice(string.ascii_uppercase + string.digits) for x in range(32))
     login_session['state'] = state
     # return "The current session state is {}".format(login_session['state'])
@@ -48,18 +71,21 @@ def ensureLogin(func):
         return func(*args, **kwargs)
     return decorated_function
 
-
+# For more details on oauth2 flow with google, visit https://developers.google.com/identity/protocols/OAuth2WebServer
+# The implementation below is slightly different
 # The ajax portion in the login will call this function
 @app.route('/gconnect', methods=['POST'])
 def gconnect():
     # Validate state token
-    # First check if the state of the server when the user clicked login is same as the state
+    # First check if the state_token of the server when the user clicked login is same as the state_token
     # when the user POSTs. Otherwise, it may be a malicious attack on the server
     if request.args.get('state') != login_session['state']:
         response = make_response(json.dumps("Invalid state token"), 401)
         response.headers['Content-Type'] = 'application/json'
         return response
-    print("Verified state token!")
+    print("Verified state token, so it is the same user")
+    # The code here is the data sent in the ajax call to this server. It was received from google when the user
+    # approved the request
     code = request.data
 
     try:
@@ -68,7 +94,7 @@ def gconnect():
         oauth_flow = flow_from_clientsecrets('client_secrets.json', scope='')
         oauth_flow.redirect_uri = 'postmessage'
         credentials = oauth_flow.step2_exchange(code)
-        print("Converted auth code to credential object!")
+        print("Converted auth code to credentials object by talking to the token uri in client secrets")
     except FlowExchangeError:
         response = make_response(json.dumps('Failed to upgrade the authorization code.'), 401)
         response.headers['Content-Type'] = 'application/json'
@@ -79,23 +105,31 @@ def gconnect():
     url = ('https://www.googleapis.com/oauth2/v1/tokeninfo?access_token={}'.format(access_token))
     h = httplib2.Http()
     result = json.loads(h.request(url, 'GET')[1])
-    print("Used access token to talk to googleapis")
+    print("Used access token from credentials object to obtain token info from the google apis")
     if result.get('error') is not None:
         response = make_response(json.dumps(result.get('error')), 500)
         response.headers['Content-Type'] = 'application/json'
         return response
+
     # Verify the access token is used for the right user
+    # The sub here is REQUIRED. Subject Identifier. A locally unique and
+    # never reassigned identifier within the Issuer for the End-User, which is intended to be consumed by the Client
+    # This should be same as the user_id in the result object obtained by querying tokeninfo on googleapis
     gplus_id = credentials.id_token['sub']
     if result['user_id'] != gplus_id:
         response = make_response(json.dumps("Token's user id does not match given user id"), 401)
         response.headers['Content-Type'] = 'application/json'
         return  response
+    print("id token in the credentials object matches the user id in the tokeninfo")
+
     # Verify the access token is valid for the web server
     if result['issued_to'] != CLIENT_ID:
         response = make_response(json.dumps("Token's client ID does not match the app"), 401)
         response.headers['Content-Type'] = 'application/json'
         return  response
-    # Check to see if user is already logged in
+    print("tokeninfo's client id matches the app's client id")
+
+    # Check to see if a user is already logged in
     stored_credentials = login_session.get('credentials')
     stored_gplus_id = login_session.get('gplus_id')
     if stored_credentials is not None and stored_gplus_id == gplus_id:
@@ -107,7 +141,7 @@ def gconnect():
     login_session['credentials'] = credentials
     login_session['gplus_id'] = gplus_id
 
-    # Get user info
+    # Get user info by passing in the access token
     userinfo_url = "https://www.googleapis.com/oauth2/v1/userinfo"
     params = {'access_token': credentials.access_token, 'alt': 'json'}
     answer = requests.get(userinfo_url, params=params)
@@ -118,7 +152,12 @@ def gconnect():
     login_session['username'] = data['name']
     login_session['picture'] = data['picture']
     login_session['email'] = data['email']
+    login_session['user_id'] = getUserID(login_session['email'])
 
+    if login_session['user_id'] is None:
+        createUser(login_session)
+
+    print(login_session['user_id'])
     output = ''
     output += '<h1>Welcome, '
     output += login_session['username']
@@ -153,6 +192,7 @@ def gdisconnect():
         del(login_session['username'])
         del(login_session['email'])
         del(login_session['picture'])
+        del(login_session['user_id'])
         response = make_response(json.dumps('Successfully disconnected.'), 200)
         response.headers['Content-Type'] = 'application/json'
         return response
@@ -191,7 +231,7 @@ def showRestaurants():
 @ensureLogin
 def newRestaurant():
     if request.method == 'POST':
-        new_restaurant = Restaurant(name=request.form['name'])
+        new_restaurant = Restaurant(name=request.form['name'], user_id=getUserID(login_session['email']))
         session.add(new_restaurant)
         session.commit()
         flash("New restaurant " + new_restaurant.name + " added!")
@@ -238,9 +278,11 @@ def restaurantMenu(restaurant_id):
 @app.route('/restaurants/<int:restaurant_id>/menuitems/new', methods=['GET', 'POST'])
 @ensureLogin
 def newMenuItem(restaurant_id):
+    restaurant = session.query(Restaurant).filter_by(id=restaurant_id).one()
     if request.method == 'POST':
         newItem = MenuItem(name=request.form['name'], description=request.form['description'],
-                           price=request.form['price'], course=request.form['course'], restaurant_id=restaurant_id)
+                           price=request.form['price'], course=request.form['course'], restaurant_id=restaurant_id,
+                           user_id=restaurant.user_id)
         session.add(newItem)
         session.commit()
         flash("New menu Item " + newItem.name + " created!")
