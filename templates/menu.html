@@ -1,9 +1,6 @@
-<html>
-<head>
-    <link rel=stylesheet type=text/css href="{{ url_for('static', filename='styles.css') }}">
-</head>
-<body>
-
+{% extends "main.html" %}
+{% block content %}
+{% include "header.html" %}
 <h1>{{restaurant.name}}</h1>
 
 <!--Message Flashing-->
@@ -28,6 +25,4 @@
 <a href="{{url_for('editMenuItem', restaurant_id=i.restaurant_id, menu_id=i.id)}}">Edit</a>
 <a href="{{url_for('deleteMenuItem', restaurant_id=i.restaurant_id, menu_id=i.id)}}">Delete</a>
 {% endfor %}
-</body>
-
-</html>
+{% endblock %}

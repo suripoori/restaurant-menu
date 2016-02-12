@@ -1,15 +1,10 @@
-<!DOCTYPE html>
-<html>
-<head lang="en">
-    <meta charset="UTF-8">
-    <link rel=stylesheet type=text/css href="{{ url_for('static', filename='styles.css') }}">
-    <title></title>
-</head>
+{% extends "main.html" %}
+{% block content %}
+{% include "header.html" %}
 <body>
 <h1>New Restaurant</h1>
 <form action="{{ url_for('newRestaurant') }}" method="POST">
     <p>Name:</p><input type="text" size="30" name="name">
     <input type="submit" value="Create">
 </form>
-</body>
-</html>
+{% endblock %}
